@@ -40,8 +40,8 @@ class PipelineStack(cdk.Stack):
                     "npm install -g aws-cdk",
                 ],
                 commands=[
-                    "cd backend && pip install -r requirements.txt",
-                    "cd ../frontend && npm ci && npm run build",
+                    "cd backend && pip install -r requirements.txt && pytest --timeout=30 -v",
+                    "cd ../frontend && npm ci && npm run test -- --run && npm run build",
                     "cd ../infra && pip install -r requirements.txt && cdk synth",
                 ],
                 primary_output_directory="infra/cdk.out",
