@@ -6,8 +6,11 @@ Required environment variables:
   CDK_DEFAULT_REGION   — AWS region (default: us-east-1)
   PROJECT_NAME         — Project name (used for stack/pipeline naming)
   GITHUB_REPO          — GitHub repo (e.g., DatiLabs-Samples/demo-template)
-  GITHUB_BRANCH        — Git branch (default: main)
   CONNECTION_ARN       — AWS CodeConnections ARN for GitHub
+
+Pipelines:
+  dev branch  → Dev stage (auto-deploy on push)
+  main branch → Prod stage (auto-deploy on PR merge)
 """
 
 import os
@@ -19,7 +22,6 @@ app = cdk.App()
 
 project_name = os.environ.get("PROJECT_NAME")
 repo = os.environ.get("GITHUB_REPO")
-branch = os.environ.get("GITHUB_BRANCH", "main")
 connection_arn = os.environ.get("CONNECTION_ARN")
 
 if not all([project_name, repo, connection_arn]):
@@ -34,13 +36,27 @@ env = cdk.Environment(
     region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
 )
 
+# Dev pipeline — triggered by push to dev branch
 PipelineStack(
     app,
-    f"{project_name}-pipeline",
+    f"{project_name}-dev-pipeline",
     env=env,
     project_name=project_name,
     repo=repo,
-    branch=branch,
+    branch="dev",
+    stage_name="Dev",
+    connection_arn=connection_arn,
+)
+
+# Prod pipeline — triggered by PR merge to main branch
+PipelineStack(
+    app,
+    f"{project_name}-prod-pipeline",
+    env=env,
+    project_name=project_name,
+    repo=repo,
+    branch="main",
+    stage_name="Prod",
     connection_arn=connection_arn,
 )
 

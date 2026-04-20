@@ -1,6 +1,7 @@
-"""CodePipeline stack — deploy once with `cdk deploy`. After that, git push triggers deployments.
+"""CodePipeline stack — one pipeline per environment.
 
-Flow: push to branch → staging deploy → manual approval → prod deploy
+Dev pipeline:  watches `dev` branch, auto-deploys on push.
+Prod pipeline: watches `main` branch, auto-deploys on PR merge from dev.
 """
 
 from constructs import Construct
@@ -18,6 +19,7 @@ class PipelineStack(cdk.Stack):
         project_name: str,
         repo: str,
         branch: str,
+        stage_name: str,
         connection_arn: str,
         **kwargs,
     ) -> None:
@@ -26,7 +28,7 @@ class PipelineStack(cdk.Stack):
         pipeline = pipelines.CodePipeline(
             self,
             "Pipeline",
-            pipeline_name=f"{project_name}-pipeline",
+            pipeline_name=f"{project_name}-{stage_name.lower()}",
             synth=pipelines.ShellStep(
                 "Synth",
                 input=pipelines.CodePipelineSource.connection(
@@ -46,19 +48,12 @@ class PipelineStack(cdk.Stack):
             ),
         )
 
-        # Staging
         pipeline.add_stage(
-            DemoStage(self, "Staging", project_name=project_name, env=kwargs.get("env"))
-        )
-
-        # Production (manual approval)
-        pipeline.add_stage(
-            DemoStage(self, "Prod", project_name=project_name, env=kwargs.get("env")),
-            pre=[pipelines.ManualApprovalStep("PromoteToProd")],
+            DemoStage(self, stage_name, project_name=project_name, stage_name=stage_name, env=kwargs.get("env"))
         )
 
 
 class DemoStage(cdk.Stage):
-    def __init__(self, scope: Construct, id: str, *, project_name: str, **kwargs) -> None:
+    def __init__(self, scope: Construct, id: str, *, project_name: str, stage_name: str, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
-        DemoStack(self, "DemoStack", project_name=project_name)
+        DemoStack(self, "DemoStack", project_name=project_name, stage_name=stage_name)
