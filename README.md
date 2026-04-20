@@ -29,7 +29,7 @@ Open http://localhost:5173. Vite proxy forwards `/api`, `/ws`, `/health` to the 
 
 **Step 1 — Create a GitHub CodeConnection**
 
-Go to AWS Console → CodePipeline → Settings → Connections → Create connection → GitHub → authorize. Copy the Connection ARN.
+Go to [AWS CodeConnections console](https://console.aws.amazon.com/codesuite/settings/connections) → Create connection → GitHub → authorize. Copy the Connection ARN.
 
 **Step 2 — Deploy the pipeline**
 
@@ -38,7 +38,7 @@ cd infra
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-export CDK_DEFAULT_ACCOUNT=123456789012
+export CDK_DEFAULT_ACCOUNT=1111111111111
 export CDK_DEFAULT_REGION=us-east-1
 export PROJECT_NAME=my-demo
 export GITHUB_REPO=DatiLabs-Samples/my-demo
