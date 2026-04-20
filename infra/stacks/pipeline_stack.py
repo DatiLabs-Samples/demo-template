@@ -51,11 +51,22 @@ class PipelineStack(cdk.Stack):
             install_commands=["npm install -g aws-cdk"],
             commands=[
                 "cd backend && pip install -r requirements.txt && pytest --timeout=30 -v",
+                # Install backend deps into backend/ for Lambda packaging (ARM64 native)
+                "pip install --no-cache-dir -r requirements.txt -t .",
                 "cd ../frontend && npm ci && npm run test -- --run && npm run build",
                 "cd ../infra && pip install -r requirements.txt && cdk synth",
             ],
             primary_output_directory="infra/cdk.out",
+            partial_build_spec=codebuild.BuildSpec.from_object({
+                "cache": {
+                    "paths": [
+                        "frontend/node_modules/**/*",
+                        "/root/.cache/pip/**/*",
+                    ],
+                },
+            }),
             build_environment=codebuild.BuildEnvironment(
+                build_image=codebuild.LinuxArmBuildImage.AMAZON_LINUX_2_STANDARD_3_0,
                 environment_variables={
                     "PROJECT_NAME": codebuild.BuildEnvironmentVariable(
                         type=codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
@@ -78,6 +89,15 @@ class PipelineStack(cdk.Stack):
             self, "Pipeline",
             pipeline_name=f"{project_name}-{stage_name.lower()}",
             synth=synth,
+            code_build_defaults=pipelines.CodeBuildOptions(
+                cache=codebuild.Cache.bucket(
+                    cdk.aws_s3.Bucket(self, "CacheBucket",
+                        removal_policy=cdk.RemovalPolicy.DESTROY,
+                        auto_delete_objects=True,
+                        lifecycle_rules=[cdk.aws_s3.LifecycleRule(expiration=cdk.Duration.days(7))],
+                    ),
+                ),
+            ),
         )
 
         stage = DemoStage(self, stage_name, project_name=project_name, stage_name=stage_name, env=kwargs.get("env"))

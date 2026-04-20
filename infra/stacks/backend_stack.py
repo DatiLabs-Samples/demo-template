@@ -26,14 +26,9 @@ class BackendStack(cdk.Stack):
             runtime=_lambda.Runtime.PYTHON_3_12,
             architecture=_lambda.Architecture.ARM_64,
             handler="run.sh",
-            code=_lambda.Code.from_asset("../backend", bundling=cdk.BundlingOptions(
-                image=_lambda.Runtime.PYTHON_3_12.bundling_image,
-                command=["bash", "-c",
-                    "pip install --no-cache-dir -r requirements.txt -t /asset-output"
-                    " && cp -r app /asset-output/"
-                    " && cp run.sh /asset-output/"
-                ],
-            )),
+            code=_lambda.Code.from_asset("../backend",
+                exclude=["venv", ".pytest_cache", "tests", "__pycache__", "*.pyc"],
+            ),
             layers=[lwa_layer],
             memory_size=256,
             timeout=cdk.Duration.seconds(30),
