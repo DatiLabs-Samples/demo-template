@@ -5,6 +5,62 @@ This document defines conventions and patterns for AWS demo projects using:
 - Frontend: Vite.js + React + TypeScript
 - UI: AWS Cloudscape Design System
 
+## Getting Started
+
+### Local Development
+
+```bash
+# Backend
+cd backend && python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt && cp .env.example .env
+uvicorn app.main:app --reload --port 8000
+
+# Frontend (separate terminal)
+cd frontend && npm install && npm run dev
+```
+
+Open http://localhost:5173. Vite proxy forwards `/api`, `/ws`, `/health` to the backend at `:8000`.
+
+### Pipeline Setup (one-time)
+
+**Prerequisites:**
+1. An AWS account with CDK bootstrapped (`cdk bootstrap`)
+2. A GitHub CodeConnection created in the AWS Console (CodePipeline → Settings → Connections)
+
+**Step 1 — Create a GitHub CodeConnection**
+
+Go to AWS Console → CodePipeline → Settings → Connections → Create connection → GitHub → authorize. Copy the Connection ARN.
+
+**Step 2 — Deploy the pipeline**
+
+```bash
+cd infra
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+export CDK_DEFAULT_ACCOUNT=123456789012
+export CDK_DEFAULT_REGION=us-east-1
+export PROJECT_NAME=my-demo
+export GITHUB_REPO=DatiLabs-Samples/my-demo
+export CONNECTION_ARN=arn:aws:codeconnections:us-east-1:123456789012:connection/xxx
+
+cdk deploy --all
+```
+
+This is the only manual deploy. After this, the pipeline is self-mutating — it updates itself from the repo.
+
+**Step 3 — Verify**
+
+Push a commit to `dev`. Check AWS Console → CodePipeline to see it trigger automatically.
+
+**How it works:**
+- CodeConnection handles GitHub ↔ AWS authentication (no tokens or secrets needed)
+- CodeBuild runs with an IAM role that CDK creates automatically
+- The env vars above are baked into the CloudFormation template at synth time — only needed during this one-time setup
+- After setup: push to `dev` → auto-deploys dev. PR merge to `main` → auto-deploys prod.
+
+---
+
 ## Backend-Frontend Communication
 
 ### REST API
@@ -41,84 +97,27 @@ All messages are JSON with a `type` field:
 
 ## Development Workflow
 
-```bash
-# Backend
-cd backend && python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt && cp .env.example .env
-uvicorn app.main:app --reload --port 8000
-
-# Frontend
-cd frontend && npm install && npm run dev
-```
-
-Vite proxy in `vite.config.ts` forwards `/api`, `/ws`, `/health` to `http://localhost:8000`.
+See [Getting Started](#getting-started) above.
 
 ## Git Conventions
 
 ### Branches
 
 ```
-main              # Production. Protected. Deploys via CodePipeline → prod.
-dev               # Development/staging. Protected. Deploys via CodePipeline → staging.
+main              # Production. Protected (PRs only from dev). Auto-deploys via CodePipeline.
+dev               # Development. Auto-deploys via CodePipeline.
 feat/{short-desc} # New features — branch from dev, PR back to dev
 fix/{short-desc}  # Bug fixes — branch from dev, PR back to dev
 hotfix/{desc}     # Urgent prod fixes — branch from main, PR to main AND dev
 ```
 
-Flow: `feat/xxx` → PR → `dev` (auto-deploys to staging) → PR → `main` (auto-deploys to prod)
+Flow: `feat/xxx` → PR → `dev` (auto-deploys) → PR → `main` (auto-deploys to prod)
 
 ### Commits
 
 Format: `<type>: <short description>` (imperative mood, under 72 chars)
 
 Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
-
-Examples: `feat: add chat streaming`, `fix: handle WS disconnect`, `chore: update deps`
-
-### Deployment (AWS CodePipeline)
-
-- Push to `dev` → CodePipeline triggers staging deployment automatically
-- PR merged to `main` → CodePipeline triggers production deployment automatically
-- Never deploy manually. All deployments go through the pipeline.
-- Pipeline stages: Source → Test → Build → Deploy
-
-### Pipeline Setup
-
-**Prerequisites:**
-1. An AWS account with CDK bootstrapped (`cdk bootstrap`)
-2. A GitHub CodeConnection created in the AWS Console (CodePipeline → Settings → Connections)
-
-**Step 1 — Create a GitHub CodeConnection**
-
-Go to AWS Console → CodePipeline → Settings → Connections → Create connection → GitHub → authorize. Copy the Connection ARN.
-
-**Step 2 — Deploy the pipeline (one-time, from your machine)**
-
-```bash
-cd infra
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-
-export CDK_DEFAULT_ACCOUNT=123456789012
-export CDK_DEFAULT_REGION=us-east-1
-export PROJECT_NAME=my-demo
-export GITHUB_REPO=DatiLabs-Samples/my-demo
-export CONNECTION_ARN=arn:aws:codeconnections:us-east-1:123456789012:connection/xxx
-
-cdk deploy --all
-```
-
-This is the only manual deploy. After this, the pipeline is self-mutating — it updates itself from the repo.
-
-**Step 3 — Verify**
-
-Push a commit to `dev`. Check AWS Console → CodePipeline to see it trigger automatically.
-
-**How it works:**
-- CodeConnection handles GitHub ↔ AWS authentication (no tokens or secrets needed)
-- CodeBuild runs with an IAM role that CDK creates automatically
-- The env vars above are baked into the CloudFormation template at synth time — they're only needed during this one-time setup
-- After setup: push to `dev` → auto-deploys dev. PR merge to `main` → auto-deploys prod.
 
 ## Naming Conventions
 
