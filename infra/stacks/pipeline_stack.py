@@ -7,7 +7,7 @@ Prod pipeline: watches `main` branch, auto-deploys on PR merge from dev.
 import json
 from constructs import Construct
 import aws_cdk as cdk
-from aws_cdk import pipelines, aws_codebuild as codebuild, aws_secretsmanager as secretsmanager
+from aws_cdk import pipelines, aws_codebuild as codebuild, aws_secretsmanager as secretsmanager, aws_iam as iam
 from stacks.demo_stack import DemoStack
 
 
@@ -81,7 +81,7 @@ class PipelineStack(cdk.Stack):
 
         stage = DemoStage(self, stage_name, project_name=project_name, stage_name=stage_name, env=kwargs.get("env"))
 
-        deploy_frontend = pipelines.ShellStep(
+        deploy_frontend = pipelines.CodeBuildStep(
             "DeployFrontend",
             input=synth.add_output_directory("frontend/dist"),
             env_from_cfn_outputs={
@@ -91,6 +91,20 @@ class PipelineStack(cdk.Stack):
             commands=[
                 "aws s3 sync . s3://$BUCKET_NAME --delete",
                 'aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"',
+            ],
+            role_policy_statements=[
+                iam.PolicyStatement(
+                    actions=["s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"],
+                    resources=["arn:aws:s3:::*"],
+                ),
+                iam.PolicyStatement(
+                    actions=["s3:PutObject", "s3:DeleteObject"],
+                    resources=["arn:aws:s3:::*/*"],
+                ),
+                iam.PolicyStatement(
+                    actions=["cloudfront:CreateInvalidation"],
+                    resources=["*"],
+                ),
             ],
         )
 
