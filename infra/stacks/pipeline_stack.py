@@ -51,7 +51,7 @@ class PipelineStack(cdk.Stack):
             commands=[
                 "cd backend && pip install -r requirements.txt && pytest --timeout=30 -v",
                 # Install backend deps into backend/ for Lambda packaging (ARM64 native)
-                "pip install --no-cache-dir -r requirements.txt -t .",
+                "pip install --no-cache-dir -r requirements.txt -t . --platform manylinux2014_aarch64 --only-binary=:all: --python-version 3.12 --implementation cp",
                 "cd ../frontend && npm ci && npm run test -- --run && npm run build",
                 "cd ../infra && pip install -r requirements.txt && cdk synth",
             ],

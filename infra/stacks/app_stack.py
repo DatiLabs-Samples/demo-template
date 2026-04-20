@@ -31,7 +31,7 @@ class AppStack(cdk.Stack):
             architecture=_lambda.Architecture.ARM_64,
             handler="run.sh",
             code=_lambda.Code.from_asset("../backend",
-                exclude=["venv", ".pytest_cache", "tests", "__pycache__", "*.pyc"],
+                exclude=["venv", ".pytest_cache", "tests", "__pycache__", "*.pyc", ".env*", "pyproject.toml"],
             ),
             layers=[lwa_layer],
             memory_size=256,
