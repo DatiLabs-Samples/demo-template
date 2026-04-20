@@ -1,23 +1,56 @@
-"""Frontend stack — S3 + CloudFront, routes /health and /api/* to backend API."""
+"""Application stack — Backend (Lambda LWA + API GW) + Frontend (S3 + CloudFront)."""
 
 from constructs import Construct
 import aws_cdk as cdk
 from aws_cdk import (
+    aws_lambda as _lambda,
+    aws_apigatewayv2 as apigwv2,
+    aws_apigatewayv2_integrations as integrations,
     aws_s3 as s3,
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
-    aws_apigatewayv2 as apigwv2,
 )
 
 
-class FrontendStack(cdk.Stack):
-    def __init__(self, scope: Construct, id: str, *, project_name: str, stage_name: str,
-                 api: apigwv2.HttpApi, **kwargs) -> None:
+class AppStack(cdk.Stack):
+    def __init__(self, scope: Construct, id: str, *, project_name: str, stage_name: str, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
         cdk.Tags.of(self).add("Project", project_name)
         cdk.Tags.of(self).add("Environment", stage_name)
 
+        # --- Backend ---
+        lwa_layer = _lambda.LayerVersion.from_layer_version_arn(
+            self, "LWALayer",
+            f"arn:aws:lambda:{self.region}:753240598075:layer:LambdaAdapterLayerArm64:24",
+        )
+
+        backend_fn = _lambda.Function(
+            self, "BackendFn",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            architecture=_lambda.Architecture.ARM_64,
+            handler="run.sh",
+            code=_lambda.Code.from_asset("../backend",
+                exclude=["venv", ".pytest_cache", "tests", "__pycache__", "*.pyc"],
+            ),
+            layers=[lwa_layer],
+            memory_size=256,
+            timeout=cdk.Duration.seconds(30),
+            environment={
+                "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
+                "AWS_LWA_PORT": "8000",
+                "CORS_ORIGINS": "*",
+            },
+        )
+
+        api = apigwv2.HttpApi(self, "BackendApi")
+        api.add_routes(
+            path="/{proxy+}",
+            methods=[apigwv2.HttpMethod.ANY],
+            integration=integrations.HttpLambdaIntegration("BackendIntegration", backend_fn),
+        )
+
+        # --- Frontend ---
         bucket = s3.Bucket(
             self, "FrontendBucket",
             removal_policy=cdk.RemovalPolicy.DESTROY,
@@ -57,6 +90,8 @@ class FrontendStack(cdk.Stack):
             ],
         )
 
+        # --- Outputs ---
+        cdk.CfnOutput(self, "ApiUrl", value=api.url or "")
         self.bucket_name_output = cdk.CfnOutput(self, "BucketName", value=bucket.bucket_name)
         self.distribution_id_output = cdk.CfnOutput(self, "DistributionId", value=distribution.distribution_id)
         cdk.CfnOutput(self, "DistributionDomainName", value=distribution.distribution_domain_name)
