@@ -8,7 +8,8 @@ import json
 from constructs import Construct
 import aws_cdk as cdk
 from aws_cdk import pipelines, aws_codebuild as codebuild, aws_secretsmanager as secretsmanager, aws_iam as iam
-from stacks.demo_stack import DemoStack
+from stacks.backend_stack import BackendStack
+from stacks.frontend_stack import FrontendStack
 
 
 class PipelineStack(cdk.Stack):
@@ -114,7 +115,10 @@ class PipelineStack(cdk.Stack):
 class DemoStage(cdk.Stage):
     def __init__(self, scope: Construct, id: str, *, project_name: str, stage_name: str, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
-        stack = DemoStack(self, "DemoStack", project_name=project_name, stage_name=stage_name)
 
-        self.bucket_name_output = stack.bucket_name_output
-        self.distribution_id_output = stack.distribution_id_output
+        backend = BackendStack(self, "BackendStack", project_name=project_name, stage_name=stage_name)
+        frontend = FrontendStack(self, "FrontendStack", project_name=project_name, stage_name=stage_name, api=backend.api)
+        frontend.add_dependency(backend)
+
+        self.bucket_name_output = frontend.bucket_name_output
+        self.distribution_id_output = frontend.distribution_id_output
