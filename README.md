@@ -80,7 +80,49 @@ Examples: `feat: add chat streaming`, `fix: handle WS disconnect`, `chore: updat
 - Push to `dev` → CodePipeline triggers staging deployment automatically
 - PR merged to `main` → CodePipeline triggers production deployment automatically
 - Never deploy manually. All deployments go through the pipeline.
-- Pipeline stages: Source → Build → Deploy (backend + frontend)
+- Pipeline stages: Source → Test → Build → Deploy
+
+### Pipeline Setup
+
+**Prerequisites:**
+1. An AWS account with CDK bootstrapped (`cdk bootstrap`)
+2. A GitHub CodeConnection created in the AWS Console (CodePipeline → Settings → Connections)
+
+**Step 1 — Set GitHub Secrets**
+
+Go to your repo → Settings → Secrets and variables → Actions → New repository secret:
+
+| Secret | Description | Example |
+|--------|-------------|---------|
+| `AWS_ACCESS_KEY_ID` | IAM user access key (for CDK deploy only) | `AKIA...` |
+| `AWS_SECRET_ACCESS_KEY` | IAM user secret key | `wJal...` |
+| `CDK_DEFAULT_ACCOUNT` | AWS Account ID | `123456789012` |
+| `CDK_DEFAULT_REGION` | AWS Region | `us-east-1` |
+| `PROJECT_NAME` | Project name (used for stack naming) | `my-demo` |
+| `GITHUB_REPO` | This repo's org/name | `DatiLabs-Samples/my-demo` |
+| `CONNECTION_ARN` | CodeConnection ARN for GitHub | `arn:aws:codeconnections:us-east-1:123456789012:connection/xxx` |
+
+**Step 2 — Deploy the pipeline (one-time)**
+
+```bash
+cd infra
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+export CDK_DEFAULT_ACCOUNT=<from secrets>
+export CDK_DEFAULT_REGION=<from secrets>
+export PROJECT_NAME=<from secrets>
+export GITHUB_REPO=<from secrets>
+export CONNECTION_ARN=<from secrets>
+
+cdk deploy --all
+```
+
+**Step 3 — Approve the GitHub connection**
+
+After the first deploy, go to AWS Console → CodePipeline → Settings → Connections → find your connection → click "Update pending connection" → authorize GitHub access.
+
+**After setup:** every push to `dev` auto-deploys to dev. Every PR merge to `main` auto-deploys to prod. No manual steps.
 
 ## Naming Conventions
 
