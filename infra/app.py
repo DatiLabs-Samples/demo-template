@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """CDK app entry point.
 
-Required environment variables (or cdk.json context):
-  CDK_DEFAULT_ACCOUNT  — AWS account ID for deployment
+Required environment variables:
+  CDK_DEFAULT_ACCOUNT  — AWS account ID
   CDK_DEFAULT_REGION   — AWS region (default: us-east-1)
-
-Required CDK context (pass via -c or cdk.json):
-  project_name         — Project name (used for stack/pipeline naming)
-  repo                 — GitHub repo path (e.g., DatiLabs-Samples/demo-template)
-  connection_arn       — AWS CodeConnections ARN for GitHub
-  branch               — Git branch to deploy from (default: main)
+  PROJECT_NAME         — Project name (used for stack/pipeline naming)
+  GITHUB_REPO          — GitHub repo (e.g., DatiLabs-Samples/demo-template)
+  GITHUB_BRANCH        — Git branch (default: main)
+  CONNECTION_ARN       — AWS CodeConnections ARN for GitHub
 """
 
 import os
@@ -19,15 +17,16 @@ from stacks.pipeline_stack import PipelineStack
 
 app = cdk.App()
 
-# --- Required context ---
-project_name = app.node.try_get_context("project_name")
-repo = app.node.try_get_context("repo")
-connection_arn = app.node.try_get_context("connection_arn")
-branch = app.node.try_get_context("branch") or "main"
+project_name = os.environ.get("PROJECT_NAME")
+repo = os.environ.get("GITHUB_REPO")
+branch = os.environ.get("GITHUB_BRANCH", "main")
+connection_arn = os.environ.get("CONNECTION_ARN")
 
 if not all([project_name, repo, connection_arn]):
-    print("ERROR: Missing required CDK context. Set in cdk.json or pass via -c:")
-    print("  cdk deploy -c project_name=my-demo -c repo=Org/repo -c connection_arn=arn:aws:...")
+    print("ERROR: Missing required environment variables:")
+    print("  export PROJECT_NAME=my-demo")
+    print("  export GITHUB_REPO=Org/repo")
+    print("  export CONNECTION_ARN=arn:aws:codeconnections:...")
     sys.exit(1)
 
 env = cdk.Environment(

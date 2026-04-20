@@ -1,9 +1,3 @@
 {
-  "app": "python3 app.py",
-  "context": {
-    "project_name": "demo",
-    "repo": "DatiLabs-Samples/demo-template",
-    "branch": "main",
-    "connection_arn": "arn:aws:codeconnections:us-east-1:ACCOUNT_ID:connection/CONNECTION_ID"
-  }
+  "app": "python3 app.py"
 }
