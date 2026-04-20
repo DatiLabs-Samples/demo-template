@@ -88,41 +88,37 @@ Examples: `feat: add chat streaming`, `fix: handle WS disconnect`, `chore: updat
 1. An AWS account with CDK bootstrapped (`cdk bootstrap`)
 2. A GitHub CodeConnection created in the AWS Console (CodePipeline → Settings → Connections)
 
-**Step 1 — Set GitHub Secrets**
+**Step 1 — Create a GitHub CodeConnection**
 
-Go to your repo → Settings → Secrets and variables → Actions → New repository secret:
+Go to AWS Console → CodePipeline → Settings → Connections → Create connection → GitHub → authorize. Copy the Connection ARN.
 
-| Secret | Description | Example |
-|--------|-------------|---------|
-| `AWS_ACCESS_KEY_ID` | IAM user access key (for CDK deploy only) | `AKIA...` |
-| `AWS_SECRET_ACCESS_KEY` | IAM user secret key | `wJal...` |
-| `CDK_DEFAULT_ACCOUNT` | AWS Account ID | `123456789012` |
-| `CDK_DEFAULT_REGION` | AWS Region | `us-east-1` |
-| `PROJECT_NAME` | Project name (used for stack naming) | `my-demo` |
-| `GITHUB_REPO` | This repo's org/name | `DatiLabs-Samples/my-demo` |
-| `CONNECTION_ARN` | CodeConnection ARN for GitHub | `arn:aws:codeconnections:us-east-1:123456789012:connection/xxx` |
-
-**Step 2 — Deploy the pipeline (one-time)**
+**Step 2 — Deploy the pipeline (one-time, from your machine)**
 
 ```bash
 cd infra
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-export CDK_DEFAULT_ACCOUNT=<from secrets>
-export CDK_DEFAULT_REGION=<from secrets>
-export PROJECT_NAME=<from secrets>
-export GITHUB_REPO=<from secrets>
-export CONNECTION_ARN=<from secrets>
+export CDK_DEFAULT_ACCOUNT=123456789012
+export CDK_DEFAULT_REGION=us-east-1
+export PROJECT_NAME=my-demo
+export GITHUB_REPO=DatiLabs-Samples/my-demo
+export CONNECTION_ARN=arn:aws:codeconnections:us-east-1:123456789012:connection/xxx
 
 cdk deploy --all
 ```
 
-**Step 3 — Approve the GitHub connection**
+This is the only manual deploy. After this, the pipeline is self-mutating — it updates itself from the repo.
 
-After the first deploy, go to AWS Console → CodePipeline → Settings → Connections → find your connection → click "Update pending connection" → authorize GitHub access.
+**Step 3 — Verify**
 
-**After setup:** every push to `dev` auto-deploys to dev. Every PR merge to `main` auto-deploys to prod. No manual steps.
+Push a commit to `dev`. Check AWS Console → CodePipeline to see it trigger automatically.
+
+**How it works:**
+- CodeConnection handles GitHub ↔ AWS authentication (no tokens or secrets needed)
+- CodeBuild runs with an IAM role that CDK creates automatically
+- The env vars above are baked into the CloudFormation template at synth time — they're only needed during this one-time setup
+- After setup: push to `dev` → auto-deploys dev. PR merge to `main` → auto-deploys prod.
 
 ## Naming Conventions
 
