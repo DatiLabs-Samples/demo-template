@@ -1,4 +1,4 @@
-# General Guidelines — AWS Demo Template
+# AWS Demo Template — General Guidelines
 
 This document defines conventions and patterns for AWS demo projects using:
 - Backend: Python + FastAPI
