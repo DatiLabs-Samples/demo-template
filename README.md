@@ -12,7 +12,7 @@ This document defines conventions and patterns for AWS demo projects using:
 ```bash
 # Backend
 cd backend && python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt && cp .env.example .env
+pip install -r requirements-dev.txt && cp .env.example .env  # use requirements.txt for runtime-only
 uvicorn app.main:app --reload --port 8000
 
 # Frontend (separate terminal)

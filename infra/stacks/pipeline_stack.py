@@ -26,9 +26,11 @@ class PipelineStack(cdk.Stack):
     ) -> None:
         super().__init__(scope, id, **kwargs)
 
+        prefix = f"{project_name}-{stage_name.lower()}"
+
         # Store pipeline config in Secrets Manager so the synth step can read it
-        config_secret_name = f"{project_name}-{stage_name.lower()}-pipeline-config"
-        secret = secretsmanager.Secret(
+        config_secret_name = f"{prefix}-pipeline-config"
+        secretsmanager.Secret(
             self, "PipelineConfig",
             secret_name=config_secret_name,
             secret_string_value=cdk.SecretValue.unsafe_plain_text(
@@ -44,28 +46,47 @@ class PipelineStack(cdk.Stack):
             repo, branch, connection_arn=connection_arn,
         )
 
+        # Synth: pre-build the deps layer (cached pip), run backend tests,
+        # build the frontend (cached npm), then `cdk synth`. The deps layer
+        # is asset-hashed by content, so unchanged requirements.txt skips the
+        # S3 upload during deploy.
         synth = pipelines.CodeBuildStep(
             "Synth",
             input=source,
             install_commands=["npm install -g aws-cdk"],
             commands=[
-                "cd backend && pip install -r requirements.txt && pytest --timeout=30 -v",
-                # Install backend deps into backend/ for Lambda packaging (ARM64 native)
-                "pip install --no-cache-dir -r requirements.txt -t . --platform manylinux2014_aarch64 --only-binary=:all: --python-version 3.12 --implementation cp",
-                "cd ../frontend && npm ci && npm run test -- --run && npm run build",
-                "cd ../infra && pip install -r requirements.txt && cdk synth",
+                # 1. Pre-build backend deps layer for ARM64 (Lambda runtime).
+                #    pip cache (configured below) makes this near-instant on
+                #    repeat builds. No --no-cache-dir.
+                "mkdir -p backend/.layer/python",
+                "pip install -r backend/requirements.txt -t backend/.layer/python "
+                "--platform manylinux2014_aarch64 --only-binary=:all: "
+                "--python-version 3.12 --implementation cp",
+                # Strip bytecode caches so the layer asset hash stays stable
+                # when deps haven't changed.
+                "find backend/.layer -type d -name __pycache__ -prune -exec rm -rf {} + || true",
+
+                # 2. Backend tests (dev deps reuse the warm pip cache).
+                "cd backend && pip install -r requirements-dev.txt && pytest --timeout=30 -v && cd ..",
+
+                # 3. Frontend test + build (npm cache makes `npm ci` fast).
+                "cd frontend && npm ci --prefer-offline --no-audit && npm run test -- --run && npm run build && cd ..",
+
+                # 4. CDK synth.
+                "cd infra && pip install -r requirements.txt && cdk synth",
             ],
             primary_output_directory="infra/cdk.out",
             partial_build_spec=codebuild.BuildSpec.from_object({
                 "cache": {
                     "paths": [
-                        "frontend/node_modules/**/*",
                         "/root/.cache/pip/**/*",
+                        "/root/.npm/**/*",
                     ],
                 },
             }),
             build_environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxArmBuildImage.AMAZON_LINUX_2_STANDARD_3_0,
+                compute_type=codebuild.ComputeType.MEDIUM,
                 environment_variables={
                     "PROJECT_NAME": codebuild.BuildEnvironmentVariable(
                         type=codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
@@ -86,7 +107,7 @@ class PipelineStack(cdk.Stack):
 
         pipeline = pipelines.CodePipeline(
             self, "Pipeline",
-            pipeline_name=f"{project_name}-{stage_name.lower()}",
+            pipeline_name=prefix,
             synth=synth,
             code_build_defaults=pipelines.CodeBuildOptions(
                 cache=codebuild.Cache.bucket(
@@ -99,7 +120,12 @@ class PipelineStack(cdk.Stack):
             ),
         )
 
-        stage = DemoStage(self, stage_name, project_name=project_name, stage_name=stage_name, env=kwargs.get("env"))
+        stage = DemoStage(
+            self, stage_name,
+            project_name=project_name,
+            stage_name=stage_name,
+            env=kwargs.get("env"),
+        )
 
         deploy_frontend = pipelines.CodeBuildStep(
             "DeployFrontend",
@@ -135,7 +161,12 @@ class DemoStage(cdk.Stage):
     def __init__(self, scope: Construct, id: str, *, project_name: str, stage_name: str, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
-        stack = AppStack(self, "AppStack", project_name=project_name, stage_name=stage_name)
+        stack = AppStack(
+            self, "AppStack",
+            project_name=project_name,
+            stage_name=stage_name,
+            stack_name=f"{project_name}-{stage_name.lower()}-app",
+        )
 
         self.bucket_name_output = stack.bucket_name_output
         self.distribution_id_output = stack.distribution_id_output

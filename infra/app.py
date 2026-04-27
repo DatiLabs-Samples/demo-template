@@ -18,6 +18,15 @@ import sys
 import aws_cdk as cdk
 from stacks.pipeline_stack import PipelineStack
 
+# The backend deps layer is asset-loaded from ../backend/.layer. The pipeline's
+# synth step populates it via pip install. Ensure the dir exists so the local
+# bootstrap synth (which never deploys the AppStack — only the pipeline) can
+# package an empty placeholder asset without crashing.
+os.makedirs(
+    os.path.join(os.path.dirname(__file__), "..", "backend", ".layer", "python"),
+    exist_ok=True,
+)
+
 app = cdk.App()
 
 project_name = os.environ.get("PROJECT_NAME")
