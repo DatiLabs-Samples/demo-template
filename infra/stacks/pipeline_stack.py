@@ -66,8 +66,8 @@ class PipelineStack(cdk.Stack):
                 # when deps haven't changed.
                 "find backend/.layer -type d -name __pycache__ -prune -exec rm -rf {} + || true",
 
-                # 2. Backend tests (dev deps reuse the warm pip cache).
-                "cd backend && pip install -r requirements-dev.txt && pytest --timeout=30 -v && cd ..",
+                # 2. Backend tests (reuses the warm pip cache).
+                "cd backend && pip install -r requirements.txt && pytest --timeout=30 -v && cd ..",
 
                 # 3. Frontend test + build (npm cache makes `npm ci` fast).
                 "cd frontend && npm ci --prefer-offline --no-audit && npm run test -- --run && npm run build && cd ..",
