@@ -1,17 +1,24 @@
-"""CodePipeline stack — one pipeline per environment.
+"""Single-CodeBuild deploy stack — Source → Build (everything in one).
 
-Dev pipeline:  watches `dev` branch, auto-deploys on push.
-Prod pipeline: watches `main` branch, auto-deploys on PR merge from dev.
+Replaces the previous CDK Pipelines architecture. One CodePipeline with two
+stages: Source (GitHub via CodeConnection) and Build (one CodeBuild action
+that runs tests, frontend build, `cdk deploy`, and frontend sync). Demos
+don't need the multi-stage Synth/SelfMutate/FileAsset/Prepare/Deploy split,
+and dropping it removes ~2 minutes of per-action CodeBuild overhead.
 """
 
-import json
 from constructs import Construct
 import aws_cdk as cdk
-from aws_cdk import pipelines, aws_codebuild as codebuild, aws_secretsmanager as secretsmanager, aws_iam as iam
-from stacks.app_stack import AppStack
+from aws_cdk import (
+    aws_codebuild as codebuild,
+    aws_codepipeline as codepipeline,
+    aws_codepipeline_actions as codepipeline_actions,
+    aws_iam as iam,
+    aws_s3 as s3,
+)
 
 
-class PipelineStack(cdk.Stack):
+class DeployStack(cdk.Stack):
     def __init__(
         self,
         scope: Construct,
@@ -22,151 +29,140 @@ class PipelineStack(cdk.Stack):
         branch: str,
         stage_name: str,
         connection_arn: str,
+        app_stack_name: str,
         **kwargs,
     ) -> None:
         super().__init__(scope, id, **kwargs)
 
         prefix = f"{project_name}-{stage_name.lower()}"
 
-        # Store pipeline config in Secrets Manager so the synth step can read it
-        config_secret_name = f"{prefix}-pipeline-config"
-        secretsmanager.Secret(
-            self, "PipelineConfig",
-            secret_name=config_secret_name,
-            secret_string_value=cdk.SecretValue.unsafe_plain_text(
-                json.dumps({
-                    "PROJECT_NAME": project_name,
-                    "GITHUB_REPO": repo,
-                    "CONNECTION_ARN": connection_arn,
-                })
+        cache_bucket = s3.Bucket(
+            self, "CacheBucket",
+            removal_policy=cdk.RemovalPolicy.DESTROY,
+            auto_delete_objects=True,
+            lifecycle_rules=[s3.LifecycleRule(expiration=cdk.Duration.days(7))],
+        )
+
+        # CodeBuild role:
+        #   - assumes the CDK bootstrap roles to run `cdk deploy`
+        #   - direct S3 + CloudFront perms for frontend sync
+        #   - read CFN outputs to discover bucket/distribution names
+        build_role = iam.Role(
+            self, "BuildRole",
+            assumed_by=iam.ServicePrincipal("codebuild.amazonaws.com"),
+        )
+        build_role.add_to_policy(iam.PolicyStatement(
+            actions=["sts:AssumeRole"],
+            resources=[f"arn:aws:iam::{self.account}:role/cdk-*"],
+        ))
+        build_role.add_to_policy(iam.PolicyStatement(
+            actions=["ssm:GetParameter"],
+            resources=[f"arn:aws:ssm:{self.region}:{self.account}:parameter/cdk-bootstrap/*"],
+        ))
+        build_role.add_to_policy(iam.PolicyStatement(
+            actions=["cloudformation:DescribeStacks"],
+            resources=["*"],
+        ))
+        build_role.add_to_policy(iam.PolicyStatement(
+            actions=["s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"],
+            resources=["arn:aws:s3:::*", "arn:aws:s3:::*/*"],
+        ))
+        build_role.add_to_policy(iam.PolicyStatement(
+            actions=["cloudfront:CreateInvalidation"],
+            resources=["*"],
+        ))
+        cache_bucket.grant_read_write(build_role)
+
+        layer_install_cmd = (
+            'REQ_SHA=$(sha256sum backend/requirements.txt | awk \'{print $1}\'); '
+            'if [ -f backend/.layer.sha256 ] && [ -d backend/.layer/python ] '
+            '&& [ "$(cat backend/.layer.sha256)" = "$REQ_SHA" ]; then '
+            '  echo "[layer] up-to-date — skipping pip install"; '
+            'else '
+            '  echo "[layer] requirements.txt changed — rebuilding"; '
+            '  rm -rf backend/.layer && mkdir -p backend/.layer/python; '
+            '  pip install -r backend/requirements.txt -t backend/.layer/python '
+            '    --platform manylinux2014_aarch64 --only-binary=:all: '
+            '    --python-version 3.12 --implementation cp; '
+            '  find backend/.layer -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true; '
+            '  echo "$REQ_SHA" > backend/.layer.sha256; '
+            'fi'
+        )
+
+        project = codebuild.PipelineProject(
+            self, "Build",
+            project_name=f"{prefix}-build",
+            role=build_role,
+            environment=codebuild.BuildEnvironment(
+                build_image=codebuild.LinuxArmBuildImage.AMAZON_LINUX_2_STANDARD_3_0,
+                compute_type=codebuild.ComputeType.SMALL,
             ),
-        )
-
-        source = pipelines.CodePipelineSource.connection(
-            repo, branch, connection_arn=connection_arn,
-        )
-
-        # Synth: pre-build the deps layer (cached pip), run backend tests,
-        # build the frontend (cached npm), then `cdk synth`. The deps layer
-        # is asset-hashed by content, so unchanged requirements.txt skips the
-        # S3 upload during deploy.
-        synth = pipelines.CodeBuildStep(
-            "Synth",
-            input=source,
-            install_commands=["npm install -g aws-cdk"],
-            commands=[
-                # 1. Pre-build backend deps layer for ARM64 (Lambda runtime).
-                #    pip cache (configured below) makes this near-instant on
-                #    repeat builds. No --no-cache-dir.
-                "mkdir -p backend/.layer/python",
-                "pip install -r backend/requirements.txt -t backend/.layer/python "
-                "--platform manylinux2014_aarch64 --only-binary=:all: "
-                "--python-version 3.12 --implementation cp",
-                # Strip bytecode caches so the layer asset hash stays stable
-                # when deps haven't changed.
-                "find backend/.layer -type d -name __pycache__ -prune -exec rm -rf {} + || true",
-
-                # 2. Backend tests (reuses the warm pip cache).
-                "cd backend && pip install -r requirements.txt && pytest --timeout=30 -v && cd ..",
-
-                # 3. Frontend test + build (npm cache makes `npm ci` fast).
-                "cd frontend && npm ci --prefer-offline --no-audit && npm run test -- --run && npm run build && cd ..",
-
-                # 4. CDK synth.
-                "cd infra && pip install -r requirements.txt && cdk synth",
-            ],
-            primary_output_directory="infra/cdk.out",
-            partial_build_spec=codebuild.BuildSpec.from_object({
+            cache=codebuild.Cache.bucket(cache_bucket),
+            timeout=cdk.Duration.minutes(30),
+            build_spec=codebuild.BuildSpec.from_object({
+                "version": "0.2",
                 "cache": {
                     "paths": [
                         "/root/.cache/pip/**/*",
                         "/root/.npm/**/*",
+                        "backend/.layer/**/*",
+                        "backend/.layer.sha256",
                     ],
                 },
+                "phases": {
+                    "install": {
+                        "commands": ["npm install -g aws-cdk"],
+                    },
+                    "build": {
+                        "commands": [
+                            # 1. Backend tests
+                            "cd backend && pip install -r requirements.txt && pytest --timeout=30 -v && cd ..",
+                            # 2. Backend deps layer (skipped when requirements.txt unchanged)
+                            layer_install_cmd,
+                            # 3. Frontend test + build
+                            "cd frontend && npm ci --prefer-offline --no-audit && npm run test -- --run && npm run build && cd ..",
+                            # 4. Deploy app stack — synth + asset publish + CFN, all in one cdk process
+                            "cd infra && pip install -r requirements.txt",
+                            f"cdk deploy {app_stack_name} --require-approval never --hotswap-fallback",
+                            "cd ..",
+                            # 5. Frontend sync — read CFN outputs from the just-deployed stack
+                            f'BUCKET=$(aws cloudformation describe-stacks --stack-name {app_stack_name} '
+                            f'--query "Stacks[0].Outputs[?OutputKey==\'BucketName\'].OutputValue" --output text)',
+                            f'DIST=$(aws cloudformation describe-stacks --stack-name {app_stack_name} '
+                            f'--query "Stacks[0].Outputs[?OutputKey==\'DistributionId\'].OutputValue" --output text)',
+                            'aws s3 sync frontend/dist "s3://$BUCKET" --delete',
+                            'aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/*"',
+                        ],
+                    },
+                },
             }),
-            build_environment=codebuild.BuildEnvironment(
-                build_image=codebuild.LinuxArmBuildImage.AMAZON_LINUX_2_STANDARD_3_0,
-                compute_type=codebuild.ComputeType.MEDIUM,
-                environment_variables={
-                    "PROJECT_NAME": codebuild.BuildEnvironmentVariable(
-                        type=codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
-                        value=f"{config_secret_name}:PROJECT_NAME",
-                    ),
-                    "GITHUB_REPO": codebuild.BuildEnvironmentVariable(
-                        type=codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
-                        value=f"{config_secret_name}:GITHUB_REPO",
-                    ),
-                    "CONNECTION_ARN": codebuild.BuildEnvironmentVariable(
-                        type=codebuild.BuildEnvironmentVariableType.SECRETS_MANAGER,
-                        value=f"{config_secret_name}:CONNECTION_ARN",
-                    ),
-                }
-            ),
-
         )
 
-        pipeline = pipelines.CodePipeline(
+        source_artifact = codepipeline.Artifact()
+        owner, repo_name = repo.split("/", 1)
+        codepipeline.Pipeline(
             self, "Pipeline",
-            pipeline_name=prefix,
-            synth=synth,
-            code_build_defaults=pipelines.CodeBuildOptions(
-                cache=codebuild.Cache.bucket(
-                    cdk.aws_s3.Bucket(self, "CacheBucket",
-                        removal_policy=cdk.RemovalPolicy.DESTROY,
-                        auto_delete_objects=True,
-                        lifecycle_rules=[cdk.aws_s3.LifecycleRule(expiration=cdk.Duration.days(7))],
-                    ),
+            pipeline_name=f"{prefix}-deploy",
+            pipeline_type=codepipeline.PipelineType.V2,
+            stages=[
+                codepipeline.StageProps(
+                    stage_name="Source",
+                    actions=[codepipeline_actions.CodeStarConnectionsSourceAction(
+                        action_name="GitHub",
+                        connection_arn=connection_arn,
+                        owner=owner,
+                        repo=repo_name,
+                        branch=branch,
+                        output=source_artifact,
+                    )],
                 ),
-            ),
-        )
-
-        stage = DemoStage(
-            self, stage_name,
-            project_name=project_name,
-            stage_name=stage_name,
-            env=kwargs.get("env"),
-        )
-
-        deploy_frontend = pipelines.CodeBuildStep(
-            "DeployFrontend",
-            input=synth.add_output_directory("frontend/dist"),
-            env_from_cfn_outputs={
-                "BUCKET_NAME": stage.bucket_name_output,
-                "DISTRIBUTION_ID": stage.distribution_id_output,
-            },
-            commands=[
-                "aws s3 sync . s3://$BUCKET_NAME --delete",
-                'aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"',
-            ],
-            role_policy_statements=[
-                iam.PolicyStatement(
-                    actions=["s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"],
-                    resources=["arn:aws:s3:::*"],
-                ),
-                iam.PolicyStatement(
-                    actions=["s3:PutObject", "s3:DeleteObject"],
-                    resources=["arn:aws:s3:::*/*"],
-                ),
-                iam.PolicyStatement(
-                    actions=["cloudfront:CreateInvalidation"],
-                    resources=["*"],
+                codepipeline.StageProps(
+                    stage_name="Build",
+                    actions=[codepipeline_actions.CodeBuildAction(
+                        action_name="DeployAll",
+                        project=project,
+                        input=source_artifact,
+                    )],
                 ),
             ],
         )
-
-        pipeline.add_stage(stage, post=[deploy_frontend])
-
-
-class DemoStage(cdk.Stage):
-    def __init__(self, scope: Construct, id: str, *, project_name: str, stage_name: str, **kwargs) -> None:
-        super().__init__(scope, id, **kwargs)
-
-        stack = AppStack(
-            self, "AppStack",
-            project_name=project_name,
-            stage_name=stage_name,
-            stack_name=f"{project_name}-{stage_name.lower()}-app",
-        )
-
-        self.bucket_name_output = stack.bucket_name_output
-        self.distribution_id_output = stack.distribution_id_output
