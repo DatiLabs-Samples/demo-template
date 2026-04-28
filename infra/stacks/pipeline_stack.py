@@ -128,7 +128,9 @@ class DeployStack(cdk.Stack):
                             "cd frontend && npm ci --prefer-offline --no-audit && npm run test -- --run && npm run build && cd ..",
                             # 4. Deploy app stack — synth + asset publish + CFN, all in one cdk process
                             "cd infra && pip install -r requirements.txt",
-                            f"cdk deploy {app_stack_name} --require-approval never --hotswap-fallback",
+                            # Full CFN deploy from CodeBuild. Hotswap is for local dev
+                            # (assumes the bootstrap deploy role; no extra IAM here).
+                            f"cdk deploy {app_stack_name} --require-approval never",
                             "cd ..",
                             # 5. Frontend sync — read CFN outputs from the just-deployed stack
                             f'BUCKET=$(aws cloudformation describe-stacks --stack-name {app_stack_name} '
