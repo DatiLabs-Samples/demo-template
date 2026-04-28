@@ -96,6 +96,11 @@ class DeployStack(cdk.Stack):
             environment=codebuild.BuildEnvironment(
                 build_image=codebuild.LinuxArmBuildImage.AMAZON_LINUX_2_STANDARD_3_0,
                 compute_type=codebuild.ComputeType.SMALL,
+                environment_variables={
+                    "PROJECT_NAME": codebuild.BuildEnvironmentVariable(value=project_name),
+                    "GITHUB_REPO": codebuild.BuildEnvironmentVariable(value=repo),
+                    "CONNECTION_ARN": codebuild.BuildEnvironmentVariable(value=connection_arn),
+                },
             ),
             cache=codebuild.Cache.bucket(cache_bucket),
             timeout=cdk.Duration.minutes(30),
