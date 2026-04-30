@@ -19,31 +19,53 @@ class AppStack(cdk.Stack):
         cdk.Tags.of(self).add("Project", project_name)
         cdk.Tags.of(self).add("Environment", stage_name)
 
+        prefix = f"{project_name}-{stage_name.lower()}"
+
         # --- Backend ---
         lwa_layer = _lambda.LayerVersion.from_layer_version_arn(
             self, "LWALayer",
             f"arn:aws:lambda:{self.region}:753240598075:layer:LambdaAdapterLayerArm64:24",
         )
 
+        # Deps layer — pre-built into ../backend/.layer/python by the pipeline's
+        # synth step. Asset SOURCE hash is stable when requirements.txt is
+        # unchanged, so unchanged builds skip the S3 upload.
+        backend_deps_layer = _lambda.LayerVersion(
+            self, "BackendDepsLayer",
+            layer_version_name=f"{prefix}-backend-deps",
+            code=_lambda.Code.from_asset("../backend/.layer"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
+            compatible_architectures=[_lambda.Architecture.ARM_64],
+        )
+
         backend_fn = _lambda.Function(
             self, "BackendFn",
+            function_name=f"{prefix}-backend",
             runtime=_lambda.Runtime.PYTHON_3_12,
             architecture=_lambda.Architecture.ARM_64,
             handler="run.sh",
             code=_lambda.Code.from_asset("../backend",
-                exclude=["venv", ".pytest_cache", "tests", "__pycache__", "*.pyc", ".env*", "pyproject.toml"],
+                exclude=[
+                    "venv", ".pytest_cache", "tests", "__pycache__", "*.pyc",
+                    ".env*", "pyproject.toml", ".layer", ".layer.sha256",
+                    "requirements*.txt",
+                ],
             ),
-            layers=[lwa_layer],
+            layers=[lwa_layer, backend_deps_layer],
             memory_size=256,
             timeout=cdk.Duration.seconds(30),
             environment={
                 "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
                 "AWS_LWA_PORT": "8000",
                 "CORS_ORIGINS": "*",
+                # Layer deps live at /opt/python; LWA invokes run.sh which
+                # spawns a fresh Python that doesn't get Lambda's automatic
+                # layer-on-sys.path injection — set it explicitly here.
+                "PYTHONPATH": "/opt/python",
             },
         )
 
-        api = apigwv2.HttpApi(self, "BackendApi")
+        api = apigwv2.HttpApi(self, "BackendApi", api_name=f"{prefix}-api")
         api.add_routes(
             path="/{proxy+}",
             methods=[apigwv2.HttpMethod.ANY],
