@@ -47,7 +47,8 @@ class AppStack(cdk.Stack):
             code=_lambda.Code.from_asset("../backend",
                 exclude=[
                     "venv", ".pytest_cache", "tests", "__pycache__", "*.pyc",
-                    ".env*", "pyproject.toml", ".layer", "requirements*.txt",
+                    ".env*", "pyproject.toml", ".layer", ".layer.sha256",
+                    "requirements*.txt",
                 ],
             ),
             layers=[lwa_layer, backend_deps_layer],
@@ -57,6 +58,10 @@ class AppStack(cdk.Stack):
                 "AWS_LAMBDA_EXEC_WRAPPER": "/opt/bootstrap",
                 "AWS_LWA_PORT": "8000",
                 "CORS_ORIGINS": "*",
+                # Layer deps live at /opt/python; LWA invokes run.sh which
+                # spawns a fresh Python that doesn't get Lambda's automatic
+                # layer-on-sys.path injection — set it explicitly here.
+                "PYTHONPATH": "/opt/python",
             },
         )
 
