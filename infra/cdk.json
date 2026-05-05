@@ -2,7 +2,6 @@
   "app": "python3 app.py",
   "context": {
     "domain": "demo-template.dati.brunovilardi.dev.br",
-    "certificateArn": "arn:aws:acm:us-east-1:954976331552:certificate/2dbcc640-7fe3-4cd6-bb3f-e6296479d08f",
     "hostedZoneId": "Z0064653TM60IDL0RI7E"
   }
 }

@@ -9,14 +9,12 @@ Required environment variables:
   CONNECTION_ARN       — AWS CodeConnections ARN for GitHub
 
 Optional cdk.json context:
-  domain          — fully qualified domain (e.g., demo.dati.brunovilardi.com).
-                    prod uses {domain}; dev uses dev.{domain}.
-  certificateArn  — ACM cert ARN in us-east-1 covering both names.
-                    Mandatory when `domain` is set.
-  hostedZoneId    — Route53 public hosted zone ID covering both names.
-                    When set, the stack creates A/AAAA alias records
-                    pointing at CloudFront. Optional — leave empty to
-                    manage DNS manually.
+  domain        — fully qualified domain (e.g., demo.dati.brunovilardi.com).
+                  prod uses {domain}; dev uses dev.{domain}.
+  hostedZoneId  — Route53 public hosted zone ID covering both names.
+                  Mandatory when `domain` is set — the stack uses it to
+                  DNS-validate a fresh ACM cert and to create A/AAAA
+                  alias records pointing at CloudFront.
 
 Stacks:
   <project>-dev-deploy   — pipeline that auto-deploys on push to `dev`
@@ -57,12 +55,12 @@ if not all([project_name, repo, connection_arn]):
     sys.exit(1)
 
 domain = app.node.try_get_context("domain") or None
-certificate_arn = app.node.try_get_context("certificateArn") or None
 hosted_zone_id = app.node.try_get_context("hostedZoneId") or None
 
-if domain and not certificate_arn:
-    print("ERROR: cdk.json context `certificateArn` is required when `domain` is set.")
-    print("  The cert must be in us-east-1 and cover both {domain} and dev.{domain}.")
+if domain and not hosted_zone_id:
+    print("ERROR: cdk.json context `hostedZoneId` is required when `domain` is set.")
+    print("  The stack uses the hosted zone to DNS-validate the ACM cert and to")
+    print("  create alias records for both {domain} and dev.{domain}.")
     sys.exit(1)
 
 if hosted_zone_id and not domain:
@@ -85,7 +83,6 @@ def define_environment(stage_name: str, branch: str) -> None:
         project_name=project_name,
         stage_name=stage_name,
         domain=domain,
-        certificate_arn=certificate_arn,
         hosted_zone_id=hosted_zone_id,
     )
 

@@ -26,7 +26,6 @@ class AppStack(cdk.Stack):
         project_name: str,
         stage_name: str,
         domain: str | None = None,
-        certificate_arn: str | None = None,
         hosted_zone_id: str | None = None,
         **kwargs,
     ) -> None:
@@ -108,13 +107,25 @@ class AppStack(cdk.Stack):
         )
 
         # Custom domain: prod uses {domain} as-is; dev gets a `dev.` prefix.
+        # The cert is issued by ACM and DNS-validated via the supplied hosted zone.
+        # CloudFront requires the cert in us-east-1 — assert that here.
         custom_domain: str | None = None
         certificate = None
         if domain:
-            if not certificate_arn:
-                raise ValueError("certificate_arn is required when domain is set")
+            if not hosted_zone_id:
+                raise ValueError("hosted_zone_id is required when domain is set")
+            if self.region != "us-east-1":
+                raise ValueError(
+                    f"Custom domain requires the stack region to be us-east-1 "
+                    f"(CloudFront cert constraint); got {self.region}"
+                )
             custom_domain = domain if stage_name.lower() == "prod" else f"{stage_name.lower()}.{domain}"
-            certificate = acm.Certificate.from_certificate_arn(self, "Cert", certificate_arn)
+            zone = route53.HostedZone.from_hosted_zone_id(self, "Zone", hosted_zone_id)
+            certificate = acm.Certificate(
+                self, "Cert",
+                domain_name=custom_domain,
+                validation=acm.CertificateValidation.from_dns(zone),
+            )
 
         distribution = cloudfront.Distribution(
             self, "Distribution",
@@ -139,7 +150,7 @@ class AppStack(cdk.Stack):
             certificate=certificate,
         )
 
-        if custom_domain and hosted_zone_id:
+        if custom_domain:
             for record_type in ("A", "AAAA"):
                 route53.CfnRecordSet(
                     self, f"AliasRecord{record_type}",

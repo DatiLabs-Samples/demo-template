@@ -63,14 +63,13 @@ Push a commit to `dev`. Check AWS Console → CodePipeline to see it trigger aut
 
 ### Custom Domain (optional)
 
-By default the app is served from the auto-generated CloudFront domain (e.g. `d111abcdef8.cloudfront.net`). To serve it from your own domain, set the relevant fields under `context` in `infra/cdk.json`:
+By default the app is served from the auto-generated CloudFront domain (e.g. `d111abcdef8.cloudfront.net`). To serve it from your own domain, set two fields under `context` in `infra/cdk.json`:
 
 ```json
 {
   "app": "python3 app.py",
   "context": {
     "domain": "demo.dati.brunovilardi.com",
-    "certificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/abc-123",
     "hostedZoneId": "Z1ABCDEFGHIJKL"
   }
 }
@@ -80,14 +79,15 @@ Stage suffixing (automatic):
 - **prod** is served from `{domain}` (e.g. `demo.dati.brunovilardi.com`)
 - **dev**  is served from `dev.{domain}` (e.g. `dev.demo.dati.brunovilardi.com`)
 
-Constraints:
-- `certificateArn` is **mandatory** when `domain` is set — synth will abort otherwise.
-- The certificate must live in **us-east-1** (CloudFront requirement) and must cover **both** the prod and dev names. Issue a single ACM cert with both names as Subject Alternative Names (a wildcard like `*.demo.dati.brunovilardi.com` covers `dev.demo.dati.brunovilardi.com` but **not** the apex `demo.dati.brunovilardi.com`).
-- Leave the fields as empty strings to disable the custom-domain feature.
+How it works:
+- The stack issues its **own** ACM cert per stage (scoped to that stage's FQDN) and DNS-validates it against the supplied Route53 hosted zone. No need to pre-create a cert.
+- The stack also creates Route53 A + AAAA alias records pointing the stage's name at the CloudFront distribution.
+- The hosted zone must cover both names — typically the parent zone (e.g. for `demo.dati.brunovilardi.com`, the zone for `dati.brunovilardi.com`).
 
-DNS:
-- If `hostedZoneId` is set, the stack creates Route53 A + AAAA alias records for the stage's name pointing at the CloudFront distribution. The hosted zone must cover both the prod and dev names (typically the parent zone, e.g. `dati.brunovilardi.com`).
-- If `hostedZoneId` is left empty, no DNS records are created — point each name (CNAME or alias) at the CloudFront domain manually after deploy. The stack outputs `DistributionDomainName` and `CustomDomain` for reference.
+Constraints:
+- `hostedZoneId` is **mandatory** when `domain` is set — synth will abort otherwise.
+- Stack region must be **us-east-1** when `domain` is set (CloudFront requires its certs in us-east-1). The default `CDK_DEFAULT_REGION=us-east-1` already satisfies this.
+- Leave both fields as empty strings to disable the custom-domain feature (falls back to the auto-generated CloudFront domain, no cert, no Route53 records).
 
 ---
 
