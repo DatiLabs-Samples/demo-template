@@ -9,11 +9,27 @@ from aws_cdk import (
     aws_s3 as s3,
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
+    aws_certificatemanager as acm,
+    aws_route53 as route53,
 )
+
+# CloudFront's global hosted zone ID — fixed for all alias records targeting CloudFront.
+CLOUDFRONT_HOSTED_ZONE_ID = "Z2FDTNDATAQYW2"
 
 
 class AppStack(cdk.Stack):
-    def __init__(self, scope: Construct, id: str, *, project_name: str, stage_name: str, **kwargs) -> None:
+    def __init__(
+        self,
+        scope: Construct,
+        id: str,
+        *,
+        project_name: str,
+        stage_name: str,
+        domain: str | None = None,
+        certificate_arn: str | None = None,
+        hosted_zone_id: str | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(scope, id, **kwargs)
 
         cdk.Tags.of(self).add("Project", project_name)
@@ -91,6 +107,15 @@ class AppStack(cdk.Stack):
             origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         )
 
+        # Custom domain: prod uses {domain} as-is; dev gets a `dev.` prefix.
+        custom_domain: str | None = None
+        certificate = None
+        if domain:
+            if not certificate_arn:
+                raise ValueError("certificate_arn is required when domain is set")
+            custom_domain = domain if stage_name.lower() == "prod" else f"{stage_name.lower()}.{domain}"
+            certificate = acm.Certificate.from_certificate_arn(self, "Cert", certificate_arn)
+
         distribution = cloudfront.Distribution(
             self, "Distribution",
             default_behavior=cloudfront.BehaviorOptions(
@@ -110,10 +135,28 @@ class AppStack(cdk.Stack):
                     http_status=404, response_page_path="/index.html", response_http_status=200,
                 ),
             ],
+            domain_names=[custom_domain] if custom_domain else None,
+            certificate=certificate,
         )
+
+        if custom_domain and hosted_zone_id:
+            for record_type in ("A", "AAAA"):
+                route53.CfnRecordSet(
+                    self, f"AliasRecord{record_type}",
+                    hosted_zone_id=hosted_zone_id,
+                    name=custom_domain,
+                    type=record_type,
+                    alias_target=route53.CfnRecordSet.AliasTargetProperty(
+                        dns_name=distribution.distribution_domain_name,
+                        hosted_zone_id=CLOUDFRONT_HOSTED_ZONE_ID,
+                        evaluate_target_health=False,
+                    ),
+                )
 
         # --- Outputs ---
         cdk.CfnOutput(self, "ApiUrl", value=api.url or "")
         self.bucket_name_output = cdk.CfnOutput(self, "BucketName", value=bucket.bucket_name)
         self.distribution_id_output = cdk.CfnOutput(self, "DistributionId", value=distribution.distribution_id)
         cdk.CfnOutput(self, "DistributionDomainName", value=distribution.distribution_domain_name)
+        if custom_domain:
+            cdk.CfnOutput(self, "CustomDomain", value=custom_domain)

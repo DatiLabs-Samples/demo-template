@@ -8,6 +8,16 @@ Required environment variables:
   GITHUB_REPO          — GitHub repo (e.g., DatiLabs-Samples/demo-template)
   CONNECTION_ARN       — AWS CodeConnections ARN for GitHub
 
+Optional cdk.json context:
+  domain          — fully qualified domain (e.g., demo.dati.brunovilardi.com).
+                    prod uses {domain}; dev uses dev.{domain}.
+  certificateArn  — ACM cert ARN in us-east-1 covering both names.
+                    Mandatory when `domain` is set.
+  hostedZoneId    — Route53 public hosted zone ID covering both names.
+                    When set, the stack creates A/AAAA alias records
+                    pointing at CloudFront. Optional — leave empty to
+                    manage DNS manually.
+
 Stacks:
   <project>-dev-deploy   — pipeline that auto-deploys on push to `dev`
   <project>-prod-deploy  — pipeline that auto-deploys on push to `main`
@@ -46,6 +56,19 @@ if not all([project_name, repo, connection_arn]):
     print("  export CONNECTION_ARN=arn:aws:codeconnections:...")
     sys.exit(1)
 
+domain = app.node.try_get_context("domain") or None
+certificate_arn = app.node.try_get_context("certificateArn") or None
+hosted_zone_id = app.node.try_get_context("hostedZoneId") or None
+
+if domain and not certificate_arn:
+    print("ERROR: cdk.json context `certificateArn` is required when `domain` is set.")
+    print("  The cert must be in us-east-1 and cover both {domain} and dev.{domain}.")
+    sys.exit(1)
+
+if hosted_zone_id and not domain:
+    print("ERROR: cdk.json context `hostedZoneId` only applies when `domain` is set.")
+    sys.exit(1)
+
 env = cdk.Environment(
     account=os.environ.get("CDK_DEFAULT_ACCOUNT"),
     region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
@@ -61,6 +84,9 @@ def define_environment(stage_name: str, branch: str) -> None:
         stack_name=app_stack_name,
         project_name=project_name,
         stage_name=stage_name,
+        domain=domain,
+        certificate_arn=certificate_arn,
+        hosted_zone_id=hosted_zone_id,
     )
 
     DeployStack(
