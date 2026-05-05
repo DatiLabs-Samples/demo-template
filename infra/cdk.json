@@ -1,3 +1,7 @@
 {
-  "app": "python3 app.py"
+  "app": "python3 app.py",
+  "context": {
+    "domain": "demo-template.dati.brunovilardi.dev.br",
+    "hostedZoneId": "Z0064653TM60IDL0RI7E"
+  }
 }

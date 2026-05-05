@@ -8,6 +8,14 @@ Required environment variables:
   GITHUB_REPO          — GitHub repo (e.g., DatiLabs-Samples/demo-template)
   CONNECTION_ARN       — AWS CodeConnections ARN for GitHub
 
+Optional cdk.json context:
+  domain        — fully qualified domain (e.g., demo.dati.brunovilardi.com).
+                  prod uses {domain}; dev uses dev.{domain}.
+  hostedZoneId  — Route53 public hosted zone ID covering both names.
+                  Mandatory when `domain` is set — the stack uses it to
+                  DNS-validate a fresh ACM cert and to create A/AAAA
+                  alias records pointing at CloudFront.
+
 Stacks:
   <project>-dev-deploy   — pipeline that auto-deploys on push to `dev`
   <project>-prod-deploy  — pipeline that auto-deploys on push to `main`
@@ -46,6 +54,19 @@ if not all([project_name, repo, connection_arn]):
     print("  export CONNECTION_ARN=arn:aws:codeconnections:...")
     sys.exit(1)
 
+domain = app.node.try_get_context("domain") or None
+hosted_zone_id = app.node.try_get_context("hostedZoneId") or None
+
+if domain and not hosted_zone_id:
+    print("ERROR: cdk.json context `hostedZoneId` is required when `domain` is set.")
+    print("  The stack uses the hosted zone to DNS-validate the ACM cert and to")
+    print("  create alias records for both {domain} and dev.{domain}.")
+    sys.exit(1)
+
+if hosted_zone_id and not domain:
+    print("ERROR: cdk.json context `hostedZoneId` only applies when `domain` is set.")
+    sys.exit(1)
+
 env = cdk.Environment(
     account=os.environ.get("CDK_DEFAULT_ACCOUNT"),
     region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
@@ -61,6 +82,8 @@ def define_environment(stage_name: str, branch: str) -> None:
         stack_name=app_stack_name,
         project_name=project_name,
         stage_name=stage_name,
+        domain=domain,
+        hosted_zone_id=hosted_zone_id,
     )
 
     DeployStack(
